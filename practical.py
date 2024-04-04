@@ -10,6 +10,9 @@ from torchvision import datasets
 from torchvision.transforms import v2, autoaugment
 from torch.utils.data import DataLoader
 import seaborn as sns
+import matplotlib.pyplot as plt
+
+CLASSES=10
 
 device = torch.device("cuda:0" if torch.cuda.is_available()
                       else "cpu")
@@ -65,7 +68,7 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
             guess = torch.argmax(estimate, dim=1)
             training_accuracy += torch.sum(guess == target)
             training_number += target.shape[0]
-            loss = criterion(estimate, nn.functional.one_hot(target, 10).type_as(estimate))
+            loss = criterion(estimate, target)
             training_loss += loss
 
             optimizer.zero_grad()
@@ -83,7 +86,7 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
             target = target.to(device)
             validation_accuracy += torch.sum(guess == target)
             validation_number += target.shape[0]
-            loss = criterion(estimate, nn.functional.one_hot(target, 10).type_as(estimate))
+            loss = criterion(estimate, target)
             validation_loss += loss
 
         if validation_loss/validation_number < best_loss:
@@ -100,6 +103,37 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
             break
 
     return best_model, best_loss, best_validation_accuracy, best_training_accuracy
+
+def plot_confusion(cm, ax=None):
+    if ax is None:
+        ax= plt.subplot()
+    sns.heatmap(cm, annot=True, fmt='g', ax=ax, cmap='jet');  #annot=True to annotate cells, ftm='g' to disable scientific notation
+
+    # labels, title and ticks
+    ax.set_xlabel('True labels');ax.set_ylabel('Predicted labels');
+    ax.set_title('Confusion Matrix');
+    labels = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+    ax.xaxis.set_ticklabels(labels);
+    ax.yaxis.set_ticklabels(labels);
+    plt.pause(0.001)
+
+def evaluate_model(model, criterion, test_loader):
+    total_loss = 0
+    confusion_matrix = torch.zeros((CLASSES, CLASSES)).to(device)
+    model.to(device)
+    model.eval()
+    losses_when_wrong = []
+    for index, (image, target) in enumerate(test_loader):
+        outv = model.forward(image.to(device))
+        target = target.to(device)
+        guess = torch.argmax(outv).to(device)
+        confusion_matrix[guess, target] += 1
+        loss = criterion(outv, target)
+        if guess != target:
+            losses_when_wrong.append((loss.item(), index))
+        total_loss += loss
+    losses_when_wrong = sorted(losses_when_wrong, reverse=True)
+    return confusion_matrix.cpu(), total_loss.cpu() / len(test_loader), losses_when_wrong
 
 #alexnet_transformations = torchvision.models.AlexNet.DEFAULT.transforms()
 basic_transformations = v2.Compose([v2.ToImage(),
@@ -119,13 +153,22 @@ model = nn.Sequential(
     nn.MaxPool2d(kernel_size=2),
     nn.LeakyReLU(),
     nn.Flatten(),
-    nn.Linear(64 * 8 * 8, 10),
+    nn.Linear(64 * 8 * 8, 2048),
+    nn.LeakyReLU(),
+    nn.Linear(2048, CLASSES),
 ).to(device)
 print(model)
 
 
-optimizer = torch.optim.SGD(model.parameters(), lr=0.0001)
-criterion = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+
+m_ft = torch.nn.Sigmoid()
+loss_ft = torch.nn.CrossEntropyLoss(reduction='sum').to(device)
+def criterion(y_est, y_true):
+    y_true = nn.functional.one_hot(y_true.long(), num_classes=CLASSES).float().to(device)
+    result = loss_ft(m_ft(y_est),
+                     y_true)
+    return result
 
 trained_model, best_loss, best_validation_accuracy, best_training_accuracy = train_model(model,
                                                                                          criterion=criterion,
@@ -133,6 +176,13 @@ trained_model, best_loss, best_validation_accuracy, best_training_accuracy = tra
                                                                                          train_loader=train_loader,
                                                                                          val_loader=validate_loader,
                                                                                          num_epochs=1000)
-
+# Test model
 labeled_test_images_ = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=basic_transformations)
-_, _, test_loader = loaders(labeled_test_images_)
+_, _, test_loader = loaders([labeled_test_images_], batch_size=1)
+
+confusion_matrix, test_loss, losses_when_wrong = evaluate_model(trained_model,
+                                                                criterion=criterion,
+                                                                test_loader=test_loader)
+print(confusion_matrix, test_loss, losses_when_wrong)
+print(f"Test {100 * float(sum(torch.diagonal(confusion_matrix, 0)) / torch.sum(confusion_matrix)):.1f}%, loss={test_loss}")
+plot_confusion(confusion_matrix)
