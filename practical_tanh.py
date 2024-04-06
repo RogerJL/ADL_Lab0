@@ -11,14 +11,12 @@ from torchvision.transforms import v2, autoaugment
 from torch.utils.data import DataLoader
 import seaborn as sns
 import matplotlib.pyplot as plt
-from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter()
 
 CLASSES=10
 
 device = torch.device("cuda:0" if torch.cuda.is_available()
                       else "cpu")
-writer.add_text('device', f"Execution device {device}")
+print("Execution device", device)
 
 def loaders(parts, batch_size):
     """ One part gives None, None, test
@@ -49,19 +47,7 @@ def loaders(parts, batch_size):
 train_transformations = v2.AutoAugment() # autoaugment.AutoAugmentPolicy.IMAGENET,
                                      #  autoaugment.InterpolationMode.BILINEAR)
 
-def describe_loader(loader):
-    return f"{len(loader)}/{loader.batch_size}"
-
 def train_model(model, criterion, optimizer, train_loader, val_loader, num_epochs, early_stop=20):
-    writer.add_hparams({'optimizer': str(optimizer),
-                        'criterion': criterion.__doc__,
-                        'train_loader': describe_loader(train_loader),
-                        'val_loader':describe_loader(val_loader),
-                        'num_epochs': num_epochs,
-                        'early_stop': early_stop,
-                        },
-                       {})
-
     best_loss = float('inf')
     best_model = copy.deepcopy(model)
     best_validation_accuracy = 0
@@ -88,8 +74,6 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        writer.add_scalar('training_loss', training_loss / training_number, epoch + 1)
-        writer.add_scalar('training_accuracy', training_accuracy / training_number, epoch + 1)
 
         # Validation
         validation_number = 0
@@ -104,8 +88,6 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
             validation_number += target.shape[0]
             loss = criterion(estimate, target)
             validation_loss += loss
-        writer.add_scalar('validation_loss', validation_loss / validation_number, epoch + 1)
-        writer.add_scalar('validation_accuracy', validation_accuracy / validation_number, epoch + 1)
 
         if validation_loss/validation_number < best_loss:
             best_loss = validation_loss/validation_number
@@ -117,7 +99,6 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
 
         seen_no_improvements += 1
         if seen_no_improvements >= early_stop:
-            writer.add_text('early_stopping', "Early stopping", epoch + 1)
             print("Early stopping...")
             break
 
@@ -126,7 +107,7 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
 def plot_confusion(cm, ax=None):
     if ax is None:
         ax= plt.subplot()
-    image = sns.heatmap(cm, annot=True, fmt='g', ax=ax, cmap='jet')  #annot=True to annotate cells, ftm='g' to disable scientific notation
+    sns.heatmap(cm, annot=True, fmt='g', ax=ax, cmap='jet');  #annot=True to annotate cells, ftm='g' to disable scientific notation
 
     # labels, title and ticks
     ax.set_xlabel('True labels');ax.set_ylabel('Predicted labels');
@@ -135,7 +116,6 @@ def plot_confusion(cm, ax=None):
     ax.xaxis.set_ticklabels(labels);
     ax.yaxis.set_ticklabels(labels);
     plt.pause(0.001)
-    return image.get_figure()
 
 def evaluate_model(model, criterion, test_loader):
     total_loss = 0
@@ -153,7 +133,6 @@ def evaluate_model(model, criterion, test_loader):
             losses_when_wrong.append((loss.item(), index))
         total_loss += loss
     losses_when_wrong = sorted(losses_when_wrong, reverse=True)
-    writer.add_scalar('test_loss', total_loss.cpu() / len(test_loader))
     return confusion_matrix.cpu(), total_loss.cpu() / len(test_loader), losses_when_wrong
 
 #alexnet_transformations = torchvision.models.AlexNet.DEFAULT.transforms()
@@ -172,14 +151,13 @@ train_loader, validate_loader, _ = loaders(basic_parts, batch_size=64)
 model = nn.Sequential(
     nn.Conv2d(3, 64, kernel_size=11, stride=2, padding=5),
     nn.MaxPool2d(kernel_size=2),
-    nn.LeakyReLU(),
+    nn.Tanh(),
     nn.Flatten(),
     nn.Linear(64 * 8 * 8, 2048),
-    nn.LeakyReLU(),
+    nn.Tanh(),
     nn.Linear(2048, CLASSES),
 ).to(device)
 print(model)
-writer.add_text('model', str(model))
 
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
@@ -187,7 +165,6 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
 m_ft = torch.nn.Sigmoid()
 loss_ft = torch.nn.CrossEntropyLoss(reduction='sum').to(device)
 def criterion(y_est, y_true):
-    """CrossEntropyLoss(Sigmoid(y_est), one_hot(y_true))"""
     y_true = nn.functional.one_hot(y_true.long(), num_classes=CLASSES).float().to(device)
     result = loss_ft(m_ft(y_est),
                      y_true)
@@ -198,8 +175,7 @@ trained_model, best_loss, best_validation_accuracy, best_training_accuracy = tra
                                                                                          optimizer=optimizer,
                                                                                          train_loader=train_loader,
                                                                                          val_loader=validate_loader,
-                                                                                         num_epochs=1000,
-                                                                                         early_stop=100)
+                                                                                         num_epochs=1000)
 # Test model
 labeled_test_images_ = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=basic_transformations)
 _, _, test_loader = loaders([labeled_test_images_], batch_size=1)
@@ -209,7 +185,4 @@ confusion_matrix, test_loss, losses_when_wrong = evaluate_model(trained_model,
                                                                 test_loader=test_loader)
 print(confusion_matrix, test_loss, losses_when_wrong)
 print(f"Test {100 * float(sum(torch.diagonal(confusion_matrix, 0)) / torch.sum(confusion_matrix)):.1f}%, loss={test_loss}")
-figure = plot_confusion(confusion_matrix)
-writer.add_figure('confusion_matrix', figure)
-
-writer.flush()
+plot_confusion(confusion_matrix)
