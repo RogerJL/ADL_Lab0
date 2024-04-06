@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 import seaborn as sns
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
+
 writer = SummaryWriter()
 
 CLASSES=10
@@ -74,11 +75,13 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
         training_number = 0
         training_loss = 0.0
         training_accuracy = 0.0
-        model.eval()
+        model.train(True)
         for image, target in train_loader:
             image, target = train_transformations(image, target)
+            image = image.to(device)
             target = target.to(device)
-            estimate = model.forward(image.to(device))
+            estimate = model.forward(image)
+            del image
             guess = torch.argmax(estimate, dim=1)
             training_accuracy += torch.sum(guess == target)
             training_number += target.shape[0]
@@ -95,9 +98,11 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
         validation_number = 0
         validation_loss = 0.0
         validation_accuracy = 0.0
-        model.train(True)
+        model.eval()
         for image, target in val_loader:
-            estimate = model.forward(image.to(device))
+            image = image.to(device)
+            estimate = model.forward(image)
+            del image
             guess = torch.argmax(estimate, dim=1)
             target = target.to(device)
             validation_accuracy += torch.sum(guess == target)
@@ -120,6 +125,8 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
             writer.add_text('early_stopping', "Early stopping", epoch + 1)
             print("Early stopping...")
             break
+
+        writer.flush()
 
     return best_model, best_loss, best_validation_accuracy, best_training_accuracy
 
@@ -156,30 +163,42 @@ def evaluate_model(model, criterion, test_loader):
     writer.add_scalar('test_loss', total_loss.cpu() / len(test_loader))
     return confusion_matrix.cpu(), total_loss.cpu() / len(test_loader), losses_when_wrong
 
-#alexnet_transformations = torchvision.models.AlexNet.DEFAULT.transforms()
-basic_transformations = v2.Compose([v2.ToImage(),
-                                    v2.ToDtype(torch.float32, scale=True)])
 
-labeled_images_ = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=basic_transformations)
+if False:
+    model = nn.Sequential(
+        nn.Conv2d(3, 64, kernel_size=11, stride=2, padding=5),
+        nn.MaxPool2d(kernel_size=2),
+        nn.LeakyReLU(),
+        nn.Flatten(),
+        nn.Linear(64 * 8 * 8, 2048),
+        nn.LeakyReLU(),
+        nn.Linear(2048, CLASSES),
+    )
+    input_transformations = v2.Compose([v2.ToImage(),
+                                        v2.ToDtype(torch.float32, scale=True)])
+    BATCH_SIZE = 64
+
+else:
+    model = torchvision.models.alexnet(weights=torchvision.models.AlexNet_Weights.DEFAULT),
+    model = nn.Sequential(
+        model[0],
+        nn.Linear(1000, CLASSES),
+    )
+    input_transformations = torchvision.models.AlexNet_Weights.DEFAULT.transforms()
+    BATCH_SIZE = 5
+
+model = model.to(device)
+print(model)
+writer.add_text('model', str(model))
+
+labeled_images_ = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=input_transformations)
 print(labeled_images_)
 
 torch.manual_seed(1)
 basic_parts = torch.utils.data.random_split(labeled_images_, [0.80, 0.20])
 print("train and validate images", list(map(len, basic_parts)))
 
-train_loader, validate_loader, _ = loaders(basic_parts, batch_size=64)
-
-model = nn.Sequential(
-    nn.Conv2d(3, 64, kernel_size=11, stride=2, padding=5),
-    nn.MaxPool2d(kernel_size=2),
-    nn.LeakyReLU(),
-    nn.Flatten(),
-    nn.Linear(64 * 8 * 8, 2048),
-    nn.LeakyReLU(),
-    nn.Linear(2048, CLASSES),
-).to(device)
-print(model)
-writer.add_text('model', str(model))
+train_loader, validate_loader, _ = loaders(basic_parts, batch_size=BATCH_SIZE)
 
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
@@ -201,7 +220,10 @@ trained_model, best_loss, best_validation_accuracy, best_training_accuracy = tra
                                                                                          num_epochs=1000,
                                                                                          early_stop=100)
 # Test model
-labeled_test_images_ = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=basic_transformations)
+labeled_test_images_ = torchvision.datasets.CIFAR10(root='./data',
+                                                    train=False,
+                                                    download=True,
+                                                    transform=input_transformations)
 _, _, test_loader = loaders([labeled_test_images_], batch_size=1)
 
 confusion_matrix, test_loss, losses_when_wrong = evaluate_model(trained_model,
