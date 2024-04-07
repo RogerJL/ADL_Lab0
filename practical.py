@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 import seaborn as sns
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
+import model_utils
 
 writer = SummaryWriter()
 
@@ -179,13 +180,14 @@ if False:
     BATCH_SIZE = 64
 
 else:
-    model = torchvision.models.alexnet(weights=torchvision.models.AlexNet_Weights.DEFAULT),
+    model = torchvision.models.alexnet(weights=torchvision.models.AlexNet_Weights.DEFAULT)
+    model_utils.freeze_weights(model)
     model = nn.Sequential(
-        model[0],
+        model,
         nn.Linear(1000, CLASSES),
     )
     input_transformations = torchvision.models.AlexNet_Weights.DEFAULT.transforms()
-    BATCH_SIZE = 5
+    BATCH_SIZE = 64
 
 model = model.to(device)
 print(model)

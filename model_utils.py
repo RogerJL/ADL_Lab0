@@ -1,3 +1,5 @@
+from torch import nn
+
 def freeze_weights(model_: nn.Module):
     for param in model_.parameters(recurse=True):
         param.requires_grad = False
