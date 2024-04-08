@@ -1,4 +1,5 @@
 import torchvision
+import tensorflow as tf
 
 import copy
 import torch
@@ -14,7 +15,9 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 import model_utils
 
-writer = SummaryWriter()
+#experiment = " simple CNN network with AdamW optimizer"
+experiment = " fine tune Alex network with AdamW optimizer"
+writer = SummaryWriter(comment=experiment)
 
 CLASSES=10
 
@@ -78,16 +81,17 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
         training_accuracy = 0.0
         model.train(True)
         for image, target in train_loader:
-            image, target = train_transformations(image, target)
-            image = image.to(device)
-            target = target.to(device)
-            estimate = model.forward(image)
-            del image
-            guess = torch.argmax(estimate, dim=1)
-            training_accuracy += torch.sum(guess == target)
-            training_number += target.shape[0]
-            loss = criterion(estimate, target)
-            training_loss += loss
+            with torch.autocast(device_type=device.type, dtype=torch.float16):
+                image, target = train_transformations(image, target)
+                image = image.to(device)
+                target = target.to(device)
+                estimate = model.forward(image)
+                del image
+                guess = torch.argmax(estimate, dim=1)
+                training_accuracy += torch.sum(guess == target)
+                training_number += target.shape[0]
+                loss = criterion(estimate, target)
+                training_loss += loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -127,6 +131,11 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, num_epoch
             print("Early stopping...")
             break
 
+        if device != "CPU":
+            writer.add_scalars('memory_info',
+                               tf.config.experimental.get_memory_info('GPU:0'),
+                               epoch + 1)
+
         writer.flush()
 
     return best_model, best_loss, best_validation_accuracy, best_training_accuracy
@@ -165,14 +174,14 @@ def evaluate_model(model, criterion, test_loader):
     return confusion_matrix.cpu(), total_loss.cpu() / len(test_loader), losses_when_wrong
 
 
-if False:
+if "simple" in experiment:
     model = nn.Sequential(
         nn.Conv2d(3, 64, kernel_size=11, stride=2, padding=5),
         nn.MaxPool2d(kernel_size=2),
-        nn.LeakyReLU(),
+        nn.Tanh() if "Tanh" in experiment else nn.LeakyReLU(),
         nn.Flatten(),
         nn.Linear(64 * 8 * 8, 2048),
-        nn.LeakyReLU(),
+        nn.Tanh() if "Tanh" in experiment else nn.LeakyReLU(),
         nn.Linear(2048, CLASSES),
     )
     input_transformations = v2.Compose([v2.ToImage(),
@@ -181,13 +190,14 @@ if False:
 
 else:
     model = torchvision.models.alexnet(weights=torchvision.models.AlexNet_Weights.DEFAULT)
-    model_utils.freeze_weights(model)
+    if "FE" in experiment:
+        model_utils.freeze_weights(model)
     model = nn.Sequential(
         model,
         nn.Linear(1000, CLASSES),
     )
     input_transformations = torchvision.models.AlexNet_Weights.DEFAULT.transforms()
-    BATCH_SIZE = 64
+    BATCH_SIZE = 8
 
 model = model.to(device)
 print(model)
@@ -202,8 +212,12 @@ print("train and validate images", list(map(len, basic_parts)))
 
 train_loader, validate_loader, _ = loaders(basic_parts, batch_size=BATCH_SIZE)
 
-
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+if "SGD" in experiment:
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001)
+elif "AdamW" in experiment:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+else:
+    raise NotImplementedError("Optimizer is not given")
 
 m_ft = torch.nn.Sigmoid()
 loss_ft = torch.nn.CrossEntropyLoss(reduction='sum').to(device)
