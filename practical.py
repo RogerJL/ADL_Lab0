@@ -84,9 +84,9 @@ print(model)
 writer.add_text('model', str(model))
 
 if "SGD" in experiment:
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, weight_decay=1e-5)
 elif "AdamW" in experiment:
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-5)
 else:
     raise NotImplementedError("Optimizer is not given")
 
