@@ -112,7 +112,7 @@ def build_loaders(model_specification, data="CIFAR10", seed=1):
     if "simple" in model_specification:
         input_transformations = v2.Compose([v2.ToImage(),
                                             v2.ToDtype(torch.float32, scale=True)])
-    elif "AlexW" in model_specification:
+    elif "AlexNet" in model_specification:
         input_transformations = torchvision.models.AlexNet_Weights.DEFAULT.transforms()
     elif "complex" in model_specification:
         # model_specification = "MNIST"

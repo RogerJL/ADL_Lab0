@@ -142,7 +142,7 @@ def plot_confusion(cm, ax=None):
     return image.get_figure()
 
 def evaluate_model(model:nn.Module, criterion, classes, test_loader, device, writer:SummaryWriter=None):
-    total_loss = 0
+    total_loss = 0.0
     confusion_matrix = torch.zeros((classes, classes)).to(device)
     model.to(device)
     model.eval()
@@ -155,15 +155,17 @@ def evaluate_model(model:nn.Module, criterion, classes, test_loader, device, wri
         loss = criterion(outv, target)
         if guess != target:
             losses_when_wrong.append((loss.item(), index))
-        total_loss += loss
+        total_loss += loss.item()
     losses_when_wrong = sorted(losses_when_wrong, reverse=True)
-    if writer is not None:
-        writer.add_scalar('test_loss', total_loss.cpu() / len(test_loader))
 
     print("losses when wrong", losses_when_wrong)
 
     correct = sum(torch.diagonal(confusion_matrix, 0))
-    test_loss = total_loss.cpu() / len(test_loader)
-    print(f"Test {100 * float(correct / torch.sum(confusion_matrix)):.1f}%, loss={test_loss}")
+    test_loss = total_loss / len(test_loader)
+    test_accuracy = 100 * float(correct / torch.sum(confusion_matrix))
+    if writer is not None:
+        writer.add_scalar('test_loss', test_loss)
+        writer.add_scalar('test_accuracy', test_accuracy)
+    print(f"Test {test_accuracy :.1f}%, loss={test_loss}")
 
     return confusion_matrix.cpu(), test_loss, losses_when_wrong
