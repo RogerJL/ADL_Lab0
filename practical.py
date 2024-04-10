@@ -194,7 +194,7 @@ for model_, optimizer_ in [('simple', 'SGD'),
                                          early_stop=EARLY_STOP,
                                          writer=writer)
     # Save model
-    trained_model.save(f'trained {model_} {optimizer_}.pt')
+    torch.save(trained_model, f'trained {model_} {optimizer_}.pt')
 
     # Test
     confusion_matrix, test_loss, losses_when_wrong = mu.evaluate_model(trained_model,
@@ -229,7 +229,7 @@ mnist_model, _, _ = mu.train_model(model,
                                    early_stop=EARLY_STOP,
                                    writer=writer,
                                    )
-mnist_model.save(f'trained {model_} {optimizer_}.pt')
+torch.save(mnist_model, f'trained {model_} {optimizer_}.pt')
 
 mnist_model = torch.load(f'trained {model_} {optimizer_}.pt')
 confusion_matrix, _, _, = mu.evaluate_model(mnist_model,
@@ -254,7 +254,7 @@ mu.evaluate_model(mnist_model,
                   device=device,
                   writer=writer,
                   )
-mnist_model.save(f'trained {model_} {optimizer_}.pt')
+torch.save(mnist_model, f'trained {model_} {optimizer_}.pt')
 
 figure = mu.plot_confusion(confusion_matrix)
 writer.add_figure('confusion_matrix', figure)
