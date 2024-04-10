@@ -38,7 +38,9 @@ def train_model(model:nn.Module,
                 device,
                 early_stop=20,
                 writer=None) -> tuple[nn.Module, float, float]:
-    if writer is None:
+    if writer is not None:
+        writer.add_text('device', f"Execution device {device}")
+
         writer.add_hparams({'optimizer': str(optimizer),
                             'criterion': criterion.__doc__,
                             'train_loader': describe_loader(train_loader),
@@ -63,6 +65,7 @@ def train_model(model:nn.Module,
         training_accuracy = 0.0
         model.train(True)
         for image, target in train_loader:
+            print(image.shape)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                 image, target = train_transformations(image, target)
                 image = image.to(device)
@@ -157,4 +160,11 @@ def evaluate_model(model:nn.Module, criterion, classes, test_loader, device, wri
     losses_when_wrong = sorted(losses_when_wrong, reverse=True)
     if writer is not None:
         writer.add_scalar('test_loss', total_loss.cpu() / len(test_loader))
-    return confusion_matrix.cpu(), total_loss.cpu() / len(test_loader), losses_when_wrong
+
+    print("losses when wrong", losses_when_wrong)
+
+    correct = sum(torch.diagonal(confusion_matrix, 0))
+    test_loss = total_loss.cpu() / len(test_loader)
+    print(f"Test {100 * float(correct / torch.sum(confusion_matrix)):.1f}%, loss={test_loss}")
+
+    return confusion_matrix.cpu(), test_loss, losses_when_wrong

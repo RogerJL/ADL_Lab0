@@ -1,28 +1,20 @@
+import torchinfo
 import torchvision
-import tensorflow as tf
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import transforms
-import torchvision.models as models
-from torchvision import datasets
-from torchvision.transforms import v2, autoaugment
+from torchvision.transforms import v2
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import model_utils as mu
 
-#experiment = " simple CNN network with AdamW optimizer"
-experiment = " fine tune Alex network with AdamW optimizer"
-#experiment = " fine tune Alex network with SGD optimizer"
-writer = SummaryWriter(comment=experiment)
-
+NUM_EPOCHS = 1000
 CLASSES=10
 BATCH_SIZE = 64
 
 device = torch.device("cuda:0" if torch.cuda.is_available()
                       else "cpu")
-writer.add_text('device', f"Execution device {device}")
+
 
 def loaders(parts, batch_size):
     """ One part gives None, None, test
@@ -39,7 +31,6 @@ def loaders(parts, batch_size):
         return None, None, test_loader
 
     train_loader = DataLoader(parts[0], batch_size=batch_size, shuffle=True, num_workers=1)
-    print("Train", type(train_loader))
     validate_loader = DataLoader(parts[1], batch_size=batch_size, shuffle=False, num_workers=1)
 
     if len(parts) <= 2:
@@ -55,92 +46,227 @@ train_transformations = v2.AutoAugment() # autoaugment.AutoAugmentPolicy.IMAGENE
                                      #  autoaugment.InterpolationMode.BILINEAR)
 
 
+def build_model(model_specification, writer):
+    if "simple" in model_specification:
+        input_shape = (BATCH_SIZE, 3, 224, 224)
+        model = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=11, stride=2, padding=5),
+            nn.MaxPool2d(kernel_size=2),
+            nn.Tanh() if "Tanh" in model_specification else nn.LeakyReLU(),
+            nn.Flatten(),
+            nn.Linear(64 * 8 * 8, 2048),
+            nn.Tanh() if "Tanh" in model_specification else nn.LeakyReLU(),
+            nn.Linear(2048, CLASSES),
+        )
+    elif "complex" in model_specification:
+        input_shape = (BATCH_SIZE, 1, 28, 28)
+        model = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=11, stride=2, padding=5),
+            nn.MaxPool2d(kernel_size=2),
+            nn.LeakyReLU(),
+            nn.Flatten(),
+            nn.Linear(64 * 7 * 7, 2048),
+            nn.LeakyReLU(),
+            nn.Linear(2048, 10),
+        )
+    else:
+        input_shape = (BATCH_SIZE, 3, 224, 224)
+        model = torchvision.models.alexnet(weights=torchvision.models.AlexNet_Weights.DEFAULT)
+        if "FE" in model_specification:
+            mu.freeze_weights(model)
+        model = nn.Sequential(
+            model,
+            nn.Linear(NUM_EPOCHS, CLASSES),
+        )
 
-if "simple" in experiment:
-    model = nn.Sequential(
-        nn.Conv2d(3, 64, kernel_size=11, stride=2, padding=5),
-        nn.MaxPool2d(kernel_size=2),
-        nn.Tanh() if "Tanh" in experiment else nn.LeakyReLU(),
-        nn.Flatten(),
-        nn.Linear(64 * 8 * 8, 2048),
-        nn.Tanh() if "Tanh" in experiment else nn.LeakyReLU(),
-        nn.Linear(2048, CLASSES),
-    )
-    input_transformations = v2.Compose([v2.ToImage(),
-                                        v2.ToDtype(torch.float32, scale=True)])
+    torchinfo.summary(model, input_size=input_shape)
+    model = model.to(device)
+    writer.add_text('model', str(model))
+    return model
 
-else:
-    model = torchvision.models.alexnet(weights=torchvision.models.AlexNet_Weights.DEFAULT)
-    if "FE" in experiment:
-        mu.freeze_weights(model)
-    model = nn.Sequential(
-        model,
-        nn.Linear(1000, CLASSES),
-    )
-    input_transformations = torchvision.models.AlexNet_Weights.DEFAULT.transforms()
+def build_optimizer(model, optimizer_specification):
+    if "SGD" in optimizer_specification:
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, weight_decay=1e-5)
+    elif "AdamW" in optimizer_specification:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-5)
+    else:
+        raise NotImplementedError("Optimizer is not given")
+    return optimizer
 
-model = model.to(device)
-print(model)
-writer.add_text('model', str(model))
-
-if "SGD" in experiment:
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, weight_decay=1e-5)
-elif "AdamW" in experiment:
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-5)
-else:
-    raise NotImplementedError("Optimizer is not given")
-
-#m_ft = torch.nn.Sigmoid()
-#loss_ft = torch.nn.CrossEntropyLoss(reduction='sum')
-loss_ft = torch.nn.BCEWithLogitsLoss()
-def criterion(y_est, y_true):
+m_ft = torch.nn.Sigmoid()
+ce_loss_ft = torch.nn.CrossEntropyLoss(reduction='sum')
+def criterion_CE(y_est, y_true):
     """CrossEntropyLoss(Sigmoid(y_est), one_hot(y_true))"""
     y_true = nn.functional.one_hot(y_true.long(), num_classes=CLASSES).float().to(device)
-#    result = loss_ft(m_ft(y_est),
-#                     y_true)
-    result = loss_ft(y_est,
-                     y_true)
-    return result
+    return ce_loss_ft(m_ft(y_est), y_true)
+
+bce_loss_ft = torch.nn.BCEWithLogitsLoss(reduction='sum')
+def criterion_BCE(y_est, y_true):
+    """BCEWithLogitsLoss(y_est, one_hot(y_true))"""
+    y_true = nn.functional.one_hot(y_true.long(), num_classes=CLASSES).float().to(device)
+    return bce_loss_ft(y_est, y_true)
 
 # Data loaders
-labeled_images_ = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=input_transformations)
-print(labeled_images_)
+def build_loaders(model_specification, data="CIFAR10", seed=1):
+    if "simple" in model_specification:
+        input_transformations = v2.Compose([v2.ToImage(),
+                                            v2.ToDtype(torch.float32, scale=True)])
+    elif "AlexW" in model_specification:
+        input_transformations = torchvision.models.AlexNet_Weights.DEFAULT.transforms()
+    elif "complex" in model_specification:
+        input_transformations = v2.Compose([v2.ToImage(),
+                                            v2.ToDtype(torch.float32, scale=True)])
+    else:
+        raise NotImplementedError("Loader for model: " + model_specification)
 
-torch.manual_seed(1)
-basic_parts = torch.utils.data.random_split(labeled_images_, [0.80, 0.20])
-print("train and validate images", list(map(len, basic_parts)))
+    print("Input transform", input_transformations)
 
-train_loader, validate_loader, _ = loaders(basic_parts, batch_size=BATCH_SIZE)
-
-# Train... ... ...
-mu.train_model(model,
-               criterion=criterion,
-               optimizer=optimizer,
-               train_loader=train_loader,
-               train_transformations=train_transformations,
-               val_loader=validate_loader,
-               num_epochs=1000,
-               device=device,
-               early_stop=100,
-               writer=writer)
-
-#%% Test model
-labeled_test_images_ = torchvision.datasets.CIFAR10(root='./data',
-                                                    train=False,
+    if data == "CIFAR10":
+        labeled_images_ = torchvision.datasets.CIFAR10(root='./data',
+                                                       train=True,
+                                                       download=True,
+                                                       transform=input_transformations)
+        labeled_test_images_ = torchvision.datasets.CIFAR10(root='./data',
+                                                            train=False,
+                                                            download=True,
+                                                            transform=input_transformations)
+    elif data == "MNIST":
+        labeled_images_ = torchvision.datasets.MNIST(root='./data',
+                                                     train=True,
+                                                     download=True,
+                                                     transform=input_transformations)
+        labeled_test_images_ = torchvision.datasets.MNIST(root='./data',
+                                                            train=False,
+                                                            download=True,
+                                                            transform=input_transformations)
+    elif data == "SVHN":
+        labeled_images_ = torchvision.datasets.SVHN(root='./data',
+                                                    split="train",
                                                     download=True,
                                                     transform=input_transformations)
-_, _, test_loader = loaders([labeled_test_images_], batch_size=1)
+        labeled_test_images_ = torchvision.datasets.SVHN(root='./data',
+                                                         split="test",
+                                                         download=True,
+                                                         transform=input_transformations)
+    else:
+        raise NotImplementedError("Data is not given")
+    print(labeled_images_)
 
-trained_model = torch.load('best_model.pt')
-confusion_matrix, test_loss, losses_when_wrong = mu.evaluate_model(trained_model,
-                                                                   criterion=criterion,
-                                                                   classes=CLASSES,
-                                                                   test_loader=test_loader,
-                                                                   device=device,
-                                                                   writer=writer)
-print(confusion_matrix, test_loss, losses_when_wrong)
-print(f"Test {100 * float(sum(torch.diagonal(confusion_matrix, 0)) / torch.sum(confusion_matrix)):.1f}%, loss={test_loss}")
+    torch.manual_seed(seed)
+    basic_parts = torch.utils.data.random_split(labeled_images_, [0.80, 0.20])
+    print("train and validate images", list(map(len, basic_parts)))
+
+    train_loader, validate_loader, _ = loaders(basic_parts, batch_size=BATCH_SIZE)
+
+    _, _, test_loader = loaders([labeled_test_images_], batch_size=1)
+
+    return train_loader, validate_loader, test_loader
+
+#%%
+# Setup
+for model_, optimizer_ in [('simple', 'SGD'),
+                           ('simple', 'SGD with Tanh'),
+                           ('simple', 'AdamW'),
+                           ('AlexNet FE', 'AdamW'),
+                           ('AlexNet FE', 'SGD'),
+                           ('AlexNet FT', 'AdamW'),
+                           ('AlexNet FT', 'SGD'),
+                           ]:
+    writer = SummaryWriter(f"runs/{model_}/{optimizer_}")
+    model = build_model(model_, writer)
+    train_loader, validate_loader, test_loader = build_loaders(model_)
+    optimizer = build_optimizer(model, optimizer_)
+
+    # Train... ... ...
+    trained_model, _, _ = mu.train_model(model,
+                                         criterion=criterion_BCE,
+                                         optimizer=optimizer,
+                                         train_loader=train_loader,
+                                         train_transformations=train_transformations,
+                                         val_loader=validate_loader,
+                                         num_epochs=NUM_EPOCHS,
+                                         device=device,
+                                         early_stop=100,
+                                         writer=writer)
+    # Save model
+    trained_model.save(f'trained {model_} {optimizer_}.pt')
+
+    # Test
+    confusion_matrix, test_loss, losses_when_wrong = mu.evaluate_model(trained_model,
+                                                                       # always evaluate with same loss function
+                                                                       criterion=criterion_CE,
+                                                                       classes=CLASSES,
+                                                                       test_loader=test_loader,
+                                                                       device=device,
+                                                                       writer=writer)
+    figure = mu.plot_confusion(confusion_matrix)
+    writer.add_figure('confusion_matrix', figure)
+
+    writer.flush()
+
+#%% Test with other dataset
+# Prepare a CNN of your choice and train it on the MNIST data. Report the accuracy
+writer = SummaryWriter(f"runs/MNIST")
+model_ = "complex"
+model = build_model(model_, writer)
+mnist_train_loader, mnist_validate_loader, mnist_test_loader = build_loaders(model_, "MNIST")
+optimizer = build_optimizer(model, "AdamW")
+mnist_model, _, _ = mu.train_model(model,
+                                   criterion=criterion_BCE,
+                                   optimizer=optimizer,
+                                   train_loader=mnist_train_loader,
+                                   train_transformations=train_transformations,
+                                   val_loader=mnist_validate_loader,
+                                   num_epochs=NUM_EPOCHS,
+                                   device=device,
+                                   early_stop=100,
+                                   writer=writer,
+                                   )
+confusion_matrix, _, _, = mu.evaluate_model(mnist_model,
+                                            criterion=criterion_CE,
+                                            classes=CLASSES,
+                                            test_loader=mnist_test_loader,
+                                            device=device,
+                                            writer=writer,
+                                            )
 figure = mu.plot_confusion(confusion_matrix)
 writer.add_figure('confusion_matrix', figure)
 
+
+# Use the above model as a pre-trained CNN for the SVHN dataset. Report the accuracy
+writer = SummaryWriter(f"runs/SVHN with MNIST trained")
+svhn_loader, svhn_validate_loader, svhn_test_loader = build_loaders(model_, "SVHN")
+mu.evaluate_model(mnist_model,
+                  criterion=criterion_CE,
+                  classes=CLASSES,
+                  test_loader=svhn_test_loader,
+                  device=device,
+                  writer=writer,
+                  )
+figure = mu.plot_confusion(confusion_matrix)
+writer.add_figure('confusion_matrix', figure)
+
+writer.flush()
+
+# In the third step you are performing transfer learning from MNIST to SVHN (optional)
+svhn_model, _, _ = mu.train_model(mnist_model,
+                                  criterion=criterion_BCE,
+                                  optimizer=optimizer,
+                                  train_loader=mnist_train_loader,
+                                  train_transformations=train_transformations,
+                                  val_loader=mnist_validate_loader,
+                                  num_epochs=NUM_EPOCHS,
+                                  device=device,
+                                  early_stop=100,
+                                  writer=writer,
+                                  )
+confusion_matrix, _, _, = mu.evaluate_model(svhn_model,
+                                            criterion=criterion_CE,
+                                            classes=CLASSES,
+                                            test_loader=svhn_test_loader,
+                                            device=device,
+                                            writer=writer,
+                                            )
+figure = mu.plot_confusion(confusion_matrix)
+writer.add_figure('confusion_matrix', figure)
 writer.flush()
