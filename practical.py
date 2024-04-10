@@ -114,7 +114,11 @@ def build_loaders(model_specification, data="CIFAR10", seed=1):
     elif "AlexW" in model_specification:
         input_transformations = torchvision.models.AlexNet_Weights.DEFAULT.transforms()
     elif "complex" in model_specification:
+        # model_specification = "MNIST"
+        # data = "MNIST" or "SVHN"
         input_transformations = v2.Compose([v2.ToImage(),
+                                            v2.Grayscale(),
+                                            v2.Resize(28),
                                             v2.ToDtype(torch.float32, scale=True)])
     else:
         raise NotImplementedError("Loader for model: " + model_specification)
@@ -208,9 +212,11 @@ for model_, optimizer_ in [('simple', 'SGD'),
 # Prepare a CNN of your choice and train it on the MNIST data. Report the accuracy
 writer = SummaryWriter(f"runs/MNIST")
 model_ = "complex"
+optimizer_ = "AdamW"
+
 model = build_model(model_, writer)
 mnist_train_loader, mnist_validate_loader, mnist_test_loader = build_loaders(model_, "MNIST")
-optimizer = build_optimizer(model, "AdamW")
+optimizer = build_optimizer(model, optimizer_)
 mnist_model, _, _ = mu.train_model(model,
                                    criterion=criterion_BCE,
                                    optimizer=optimizer,
@@ -222,6 +228,9 @@ mnist_model, _, _ = mu.train_model(model,
                                    early_stop=100,
                                    writer=writer,
                                    )
+mnist_model.save(f'trained {model_} {optimizer_}.pt')
+
+mnist_model = torch.load(f'trained {model_} {optimizer_}.pt')
 confusion_matrix, _, _, = mu.evaluate_model(mnist_model,
                                             criterion=criterion_CE,
                                             classes=CLASSES,
@@ -232,8 +241,9 @@ confusion_matrix, _, _, = mu.evaluate_model(mnist_model,
 figure = mu.plot_confusion(confusion_matrix)
 writer.add_figure('confusion_matrix', figure)
 
+#%% Use the above model as a pre-trained CNN for the SVHN dataset. Report the accuracy
 
-# Use the above model as a pre-trained CNN for the SVHN dataset. Report the accuracy
+mnist_model = torch.load(f'trained {model_} {optimizer_}.pt')
 writer = SummaryWriter(f"runs/SVHN with MNIST trained")
 svhn_loader, svhn_validate_loader, svhn_test_loader = build_loaders(model_, "SVHN")
 mu.evaluate_model(mnist_model,
@@ -243,12 +253,15 @@ mu.evaluate_model(mnist_model,
                   device=device,
                   writer=writer,
                   )
+mnist_model.save(f'trained {model_} {optimizer_}.pt')
+
 figure = mu.plot_confusion(confusion_matrix)
 writer.add_figure('confusion_matrix', figure)
 
 writer.flush()
 
-# In the third step you are performing transfer learning from MNIST to SVHN (optional)
+#%% In the third step you are performing transfer learning from MNIST to SVHN (optional)
+writer = SummaryWriter(f"runs/SVHN from MNIST trained")
 svhn_model, _, _ = mu.train_model(mnist_model,
                                   criterion=criterion_BCE,
                                   optimizer=optimizer,
