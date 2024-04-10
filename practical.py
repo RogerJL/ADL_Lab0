@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 import model_utils as mu
 
 NUM_EPOCHS = 1000
+EARLY_STOP = 20
 CLASSES=10
 BATCH_SIZE = 64
 
@@ -48,7 +49,7 @@ train_transformations = v2.AutoAugment() # autoaugment.AutoAugmentPolicy.IMAGENE
 
 def build_model(model_specification, writer):
     if "simple" in model_specification:
-        input_shape = (BATCH_SIZE, 3, 224, 224)
+        input_shape = (BATCH_SIZE, 3, 32, 32)
         model = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=11, stride=2, padding=5),
             nn.MaxPool2d(kernel_size=2),
@@ -59,13 +60,13 @@ def build_model(model_specification, writer):
             nn.Linear(2048, CLASSES),
         )
     elif "complex" in model_specification:
-        input_shape = (BATCH_SIZE, 1, 28, 28)
+        input_shape = (BATCH_SIZE, 1, 32, 32)
         model = nn.Sequential(
             nn.Conv2d(1, 64, kernel_size=11, stride=2, padding=5),
             nn.MaxPool2d(kernel_size=2),
             nn.LeakyReLU(),
             nn.Flatten(),
-            nn.Linear(64 * 7 * 7, 2048),
+            nn.Linear(64 * 8 * 8, 2048),
             nn.LeakyReLU(),
             nn.Linear(2048, 10),
         )
@@ -118,7 +119,7 @@ def build_loaders(model_specification, data="CIFAR10", seed=1):
         # data = "MNIST" or "SVHN"
         input_transformations = v2.Compose([v2.ToImage(),
                                             v2.Grayscale(),
-                                            v2.Resize(28),
+                                            v2.Resize(32),
                                             v2.ToDtype(torch.float32, scale=True)])
     else:
         raise NotImplementedError("Loader for model: " + model_specification)
@@ -190,7 +191,7 @@ for model_, optimizer_ in [('simple', 'SGD'),
                                          val_loader=validate_loader,
                                          num_epochs=NUM_EPOCHS,
                                          device=device,
-                                         early_stop=100,
+                                         early_stop=EARLY_STOP,
                                          writer=writer)
     # Save model
     trained_model.save(f'trained {model_} {optimizer_}.pt')
@@ -225,7 +226,7 @@ mnist_model, _, _ = mu.train_model(model,
                                    val_loader=mnist_validate_loader,
                                    num_epochs=NUM_EPOCHS,
                                    device=device,
-                                   early_stop=100,
+                                   early_stop=EARLY_STOP,
                                    writer=writer,
                                    )
 mnist_model.save(f'trained {model_} {optimizer_}.pt')
@@ -270,7 +271,7 @@ svhn_model, _, _ = mu.train_model(mnist_model,
                                   val_loader=mnist_validate_loader,
                                   num_epochs=NUM_EPOCHS,
                                   device=device,
-                                  early_stop=100,
+                                  early_stop=EARLY_STOP,
                                   writer=writer,
                                   )
 confusion_matrix, _, _, = mu.evaluate_model(svhn_model,

@@ -65,7 +65,6 @@ def train_model(model:nn.Module,
         training_accuracy = 0.0
         model.train(True)
         for image, target in train_loader:
-            print(image.shape)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                 image, target = train_transformations(image, target)
                 image = image.to(device)
