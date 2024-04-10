@@ -170,7 +170,7 @@ def build_loaders(model_specification, data="CIFAR10", seed=1):
 #%%
 # Setup
 for model_, optimizer_ in [('simple', 'SGD'),
-                           ('simple', 'SGD with Tanh'),
+                           ('simple with Tanh', 'SGD'),
                            ('simple', 'AdamW'),
                            ('AlexNet FE', 'AdamW'),
                            ('AlexNet FE', 'SGD'),
