@@ -247,14 +247,13 @@ writer.add_figure('confusion_matrix', figure)
 mnist_model = torch.load(f'trained {model_} {optimizer_}.pt')
 writer = SummaryWriter(f"runs/SVHN with MNIST trained")
 svhn_loader, svhn_validate_loader, svhn_test_loader = build_loaders(model_, "SVHN")
-mu.evaluate_model(mnist_model,
-                  criterion=criterion_CE,
-                  classes=CLASSES,
-                  test_loader=svhn_test_loader,
-                  device=device,
-                  writer=writer,
-                  )
-torch.save(mnist_model, f'trained {model_} {optimizer_}.pt')
+confusion_matrix, _, _, = mu.evaluate_model(mnist_model,
+                                            criterion=criterion_CE,
+                                            classes=CLASSES,
+                                            test_loader=svhn_test_loader,
+                                            device=device,
+                                            writer=writer,
+                                            )
 
 figure = mu.plot_confusion(confusion_matrix)
 writer.add_figure('confusion_matrix', figure)
