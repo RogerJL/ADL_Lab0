@@ -262,12 +262,13 @@ writer.flush()
 
 #%% In the third step you are performing transfer learning from MNIST to SVHN (optional)
 writer = SummaryWriter(f"runs/SVHN from MNIST trained")
+optimizer = build_optimizer(mnist_model, optimizer_)
 svhn_model, _, _ = mu.train_model(mnist_model,
                                   criterion=criterion_BCE,
                                   optimizer=optimizer,
-                                  train_loader=mnist_train_loader,
+                                  train_loader=svhn_loader,
                                   train_transformations=train_transformations,
-                                  val_loader=mnist_validate_loader,
+                                  val_loader=svhn_validate_loader,
                                   num_epochs=NUM_EPOCHS,
                                   device=device,
                                   early_stop=EARLY_STOP,
